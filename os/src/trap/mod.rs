@@ -14,30 +14,40 @@ use riscv::register::{
 };
 
 use crate::syscall::syscall;
-use crate::batch::run_next_app;
 use crate::task::{
     exit_current_and_run_next,
     suspend_current_and_run_next,
+    current_user_token,
+    current_trap_cx,
 };
 use crate::timer::set_next_trigger;
+use crate::config::{TRAP_CONTEXT, TRAMPOLINE};
 
 use core::arch::global_asm;
+use core::arch::asm;
 
 global_asm!(include_str!("trap.S"));
 
 pub fn init() {
-    unsafe extern "C" { fn __alltraps(); }
+    set_kernel_trap_entry();
+}
+
+fn set_kernel_trap_entry() {
     unsafe {
-        stvec::write(__alltraps as *const () as usize, TrapMode::Direct);
+        stvec::write(trap_from_kernel as *const () as usize, TrapMode::Direct);
     }
 }
 
-pub fn enable_timer_interrupt() {
-    unsafe { sie::set_stimer(); }
+fn set_user_trap_entry() {
+    unsafe {
+        stvec::write(TRAMPOLINE as *const () as usize, TrapMode::Direct);
+    }
 }
 
 #[unsafe(no_mangle)]
-pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
+pub fn trap_handler() -> ! {
+    set_kernel_trap_entry();
+    let cx = current_trap_cx();
     let scause = scause::read();
     let stval = stval::read();
     match scause.cause() {
@@ -62,7 +72,38 @@ pub fn trap_handler(cx: &mut TrapContext) -> &mut TrapContext {
             panic!("Unsupported trap {:?}, stval = {:#x}!", scause.cause(), stval);
         }
     }
-    cx
+    trap_return();
+}
+
+#[unsafe(no_mangle)]
+pub fn trap_return() -> ! {
+    set_user_trap_entry();
+    let trap_cx_ptr = TRAP_CONTEXT;
+    let user_satp = current_user_token();
+    unsafe extern "C" {
+        fn __alltraps();
+        fn __restore();
+    }
+    let restore_va = __restore as *const () as usize - __alltraps as *const () as usize + TRAMPOLINE;
+    unsafe {
+        asm!(
+            "fence.i",
+            "jr {restore_va}",
+            restore_va = in(reg) restore_va,
+            in("a0") trap_cx_ptr,
+            in("a1") user_satp,
+            options(noreturn)
+        );
+    }
+}
+
+#[unsafe(no_mangle)]
+pub fn trap_from_kernel() -> ! {
+    panic!("a trap from kernel!");
+}
+
+pub fn enable_timer_interrupt() {
+    unsafe { sie::set_stimer(); }
 }
 
 pub use context::TrapContext;

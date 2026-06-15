@@ -92,10 +92,11 @@ impl AppManagerInner {
     }
 }
 
+unsafe extern "C" { fn _num_app(); }
+
 lazy_static! {
     static ref APP_MANAGER: AppManager = AppManager {
         inner: RefCell::new({
-            unsafe extern "C" { fn _num_app(); }
             let num_app_ptr = _num_app as *const () as *const usize;
             let num_app = unsafe { num_app_ptr.read_volatile() };
             let mut app_start: [usize; MAX_APP_NUM + 1] = [0; MAX_APP_NUM + 1];
@@ -120,6 +121,8 @@ pub fn print_app_info() {
     APP_MANAGER.inner.borrow().print_app_info();
 }
 
+unsafe extern "C" { fn __restore(cx_addr: usize); }
+
 pub fn run_next_app() -> ! {
     let current_app = APP_MANAGER.inner.borrow().get_current_app();
     unsafe {
@@ -127,7 +130,6 @@ pub fn run_next_app() -> ! {
     }
 
     APP_MANAGER.inner.borrow_mut().move_to_next_app();
-    unsafe extern "C" { fn __restore(cx_addr: usize); }
     unsafe {
         __restore(KERNEL_STACK.push_context(
             TrapContext::app_init_context(APP_BASE_ADDRESS, USER_STACK.get_sp())
