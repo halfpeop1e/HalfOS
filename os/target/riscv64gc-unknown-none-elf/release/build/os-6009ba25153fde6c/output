@@ -11,4 +11,6 @@ app_7: 02power_7
 app_8: 02write_c
 app_9: 03sleep
 app_10: 03writeNum
-app_11: myapp
+app_11: initproc
+app_12: myapp
+app_13: user_shell
